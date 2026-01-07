@@ -1,0 +1,22 @@
+{
+  "name": "yu-recall-plugin",
+  "version": "1.0.0",
+  "description": "Yunzai-Bot V3 防撤回插件，支持锅巴面板配置，检测撤回并转发给主人",
+  "main": "index.js",
+  "type": "module",
+  "author": "yuhold",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuhold/yu-recall-plugin.git"
+  },
+  "keywords": [
+    "yunzai",
+    "bot",
+    "recall",
+    "plugin"
+  ],
+  "dependencies": {
+    "yaml": "^2.3.0"
+  }
+}

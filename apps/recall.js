@@ -29,23 +29,34 @@ export class YuRecall extends plugin {
     })
   }
 
-  // 1. 记录消息 (群聊 + 私聊)
+  // --- 辅助日志函数 ---
+  log (msg) {
+    const cfg = Cfg.getAll()
+    if (cfg.debug) {
+      // 使用 logger.mark 让日志在控制台显眼一点（通常是紫色或蓝色）
+      logger.mark(`[Yu-Recall-Debug] ${msg}`)
+    }
+  }
+
   async recordMsg (e) {
     if (!e.message_id) return false
     
-    // 存储关键信息
+    // 存入缓存
     msgCache.set(e.message_id, {
-      msg: e.message, // 消息内容(数组)
-      sender: e.sender, // 发送者信息
-      group_name: e.group_name || e.group?.name || '', // 群名
-      group_id: e.group_id || '', // 群号
-      is_group: !!e.group_id, // 是否为群消息
-      friend_name: e.sender.nickname || e.sender.card || '', // 好友名
-      user_id: e.user_id, // 对方QQ
+      msg: e.message,
+      sender: e.sender,
+      group_name: e.group_name || e.group?.name || '',
+      group_id: e.group_id || '',
+      is_group: !!e.group_id,
+      friend_name: e.sender.nickname || e.sender.card || '',
+      user_id: e.user_id,
       time: Date.now()
     })
 
-    // 2分钟后清理
+    // 调试日志：记录动作
+    // 只有开启调试模式才会看到这行刷屏
+    // this.log(`已缓存消息 ID: ${e.message_id} 来自: ${e.user_id}`)
+
     setTimeout(() => {
       msgCache.delete(e.message_id)
     }, 125 * 1000)
@@ -53,95 +64,80 @@ export class YuRecall extends plugin {
     return false
   }
 
-  // 2. 处理撤回
   async onRecall (e) {
-    // 重新加载配置，确保锅巴修改后立即生效
     Cfg.reload()
     const cfg = Cfg.getAll()
     
-    // 总开关检查
-    if (!cfg.enable) return false
+    // 1. 检查总开关
+    if (!cfg.enable) {
+      // 关了就不打日志了，避免干扰
+      return false
+    }
 
-    // 机器人自己撤回不处理
-    if (e.operator_id === e.self_id) return false
-
-    // 获取被撤回的消息
     let recallMsgId = e.message_id
-    if (!msgCache.has(recallMsgId)) return false
+    this.log(`检测到撤回事件! ID: ${recallMsgId}, Operator: ${e.operator_id}`)
+
+    // 2. 检查是否缓存
+    if (!msgCache.has(recallMsgId)) {
+      this.log(`缓存中未找到该消息 (可能时间太久或重启丢失)`)
+      return false
+    }
     
     let cached = msgCache.get(recallMsgId)
     let { msg, group_name, group_id, is_group, friend_name, user_id } = cached
 
-    // 权限检查 (Global模式 vs 指定模式)
-    if (!this.checkPermission(cfg, is_group, is_group ? group_id : user_id)) {
+    // 3. 检查权限
+    let hasPerm = this.checkPermission(cfg, is_group, is_group ? group_id : user_id)
+    if (!hasPerm) {
+      this.log(`权限拦截: 当前模式=${cfg.globalMode ? '全局' : '白名单'}, 目标ID=${is_group ? group_id : user_id} 被忽略`)
       return false
     }
 
-    // 获取主人QQ
+    // 4. 检查是否是主人
     let masters = this.e.bot.config.masterQQ || []
-    if (masters.includes(e.operator_id)) return false // 主人自己撤回不提示
+    if (masters.includes(e.operator_id)) {
+      this.log(`撤回者是主人，跳过转发`)
+      return false
+    }
 
-    // --- 构建消息 ---
+    // --- 发送 ---
     let headerText = ''
-    
     if (is_group) {
-      // 格式: 群名字 群号 撤回内容
-      // 如果没有获取到群名，就显示“未知群”
       let gName = group_name || '未知群'
       headerText = `${gName} ${group_id} 撤回内容：\n`
     } else {
-      // 格式: 好友名字 好友qq号 撤回内容
       headerText = `${friend_name} ${user_id} 撤回内容：\n`
     }
 
-    // 拼接消息
     let finalMsg = [headerText, ...msg]
+    this.log(`准备发送给主人，内容预览: ${headerText.trim()}`)
 
-    // 发送给主人
     for (let master_id of masters) {
-      // 避免转发给自己造成递归（如果在私聊测试）
       if (master_id == user_id && !is_group) continue 
 
       try {
         await this.e.bot.pickFriend(master_id).sendMsg(finalMsg)
+        this.log(`--> 发送给主人 ${master_id} 成功`)
         await common.sleep(500)
       } catch (err) {
-        // 发送失败忽略
+        logger.error(`[Yu-Recall] 发送给主人失败: ${err}`)
       }
     }
     
-    // 删缓存
     msgCache.delete(recallMsgId)
     return false
   }
 
-  /**
-   * 检查是否允许通知
-   * @param {Object} cfg 配置对象
-   * @param {Boolean} isGroup 是否群组
-   * @param {String|Number} id 群号或QQ号
-   */
   checkPermission (cfg, isGroup, id) {
-    id = String(id) // 转字符串比对
-
+    id = String(id)
     if (cfg.globalMode) {
-      // --- 全局模式 (黑名单生效) ---
-      if (isGroup) {
-        // 如果在群黑名单里，返回 false
-        return !cfg.blackListGroup.includes(id)
-      } else {
-        // 如果在好友黑名单里，返回 false
-        return !cfg.blackListFriend.includes(id)
-      }
+      // 黑名单模式
+      if (isGroup) return !cfg.blackListGroup.includes(id)
+      return !cfg.blackListFriend.includes(id)
     } else {
-      // --- 指定模式 (白名单生效) ---
-      if (isGroup) {
-        // 只有在群白名单里，才返回 true
-        return cfg.whiteListGroup.includes(id)
-      } else {
-        // 只有在好友白名单里，才返回 true
-        return cfg.whiteListFriend.includes(id)
-      }
+      // 白名单模式
+      if (isGroup) return cfg.whiteListGroup.includes(id)
+      return cfg.whiteListFriend.includes(id)
     }
   }
 }

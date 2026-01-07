@@ -1,18 +1,23 @@
 import fs from 'fs'
 import YAML from 'yaml'
 import path from 'path'
+import { fileURLToPath } from 'url'
 
-const configPath = './plugins/yu-recall-plugin/config/system/'
-const configFile = configPath + 'config.yaml'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const configDir = path.join(__dirname, 'system')
+const configFile = path.join(configDir, 'config.yaml')
 
-// 默认配置
+// 默认配置增加了 debug 和 language
 const defaultCfg = {
-  enable: true, // 总开关
-  globalMode: true, // true=全局开启(黑名单模式), false=指定开启(白名单模式)
-  blackListGroup: [], // 黑名单群 (全局模式下，这些群不提示)
-  whiteListGroup: [], // 白名单群 (指定模式下，只有这些群提示)
-  blackListFriend: [], // 黑名单好友
-  whiteListFriend: []  // 白名单好友
+  enable: true,
+  debug: false,      // <--- 新增：调试模式开关
+  language: 'CN',    // <--- 新增：语言设置 CN/EN
+  globalMode: true,
+  blackListGroup: [],
+  whiteListGroup: [],
+  blackListFriend: [],
+  whiteListFriend: []
 }
 
 class Config {
@@ -22,7 +27,9 @@ class Config {
   }
 
   init () {
-    if (!fs.existsSync(configPath)) fs.mkdirSync(configPath, { recursive: true })
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true })
+    }
     if (!fs.existsSync(configFile)) {
       fs.writeFileSync(configFile, YAML.stringify(defaultCfg))
     }
@@ -37,16 +44,10 @@ class Config {
     }
   }
 
-  get (key) {
-    return this.config[key]
-  }
-
-  // 获取完整配置对象，给锅巴用
   getAll () {
     return this.config
   }
 
-  // 保存配置，给锅巴用
   save (data) {
     this.config = { ...this.config, ...data }
     fs.writeFileSync(configFile, YAML.stringify(this.config))
